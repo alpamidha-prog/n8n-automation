@@ -1,0 +1,336 @@
+{
+    "name": "AI Research Assistant — arXiv + Summarise + Deliver",
+    "nodes": [
+        {
+            "parameters": {
+                "rule": {
+                    "interval": [
+                        {
+                            "field": "cronExpression",
+                            "expression": "0 7 * * *"
+                        }
+                    ]
+                }
+            },
+            "id": "node-trigger",
+            "name": "Schedule Trigger",
+            "type": "n8n-nodes-base.scheduleTrigger",
+            "typeVersion": 1.1,
+            "position": [
+                240,
+                300
+            ],
+            "notes": "Runs every day at 07:00. Change the cron expression to adjust timing. You can swap this for a Webhook trigger for on-demand runs."
+        },
+        {
+            "parameters": {
+                "method": "GET",
+                "url": "https://export.arxiv.org/api/query",
+                "sendQuery": true,
+                "queryParameters": {
+                    "parameters": [
+                        {
+                            "name": "search_query",
+                            "value": "ti:large language models"
+                        },
+                        {
+                            "name": "max_results",
+                            "value": "5"
+                        },
+                        {
+                            "name": "sortBy",
+                            "value": "submittedDate"
+                        },
+                        {
+                            "name": "sortOrder",
+                            "value": "descending"
+                        }
+                    ]
+                },
+                "options": {
+                    "response": {
+                        "response": {
+                            "responseFormat": "text"
+                        }
+                    }
+                }
+            },
+            "id": "node-arxiv",
+            "name": "Fetch arXiv Papers",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                460,
+                300
+            ],
+            "notes": "Fetches the 5 most recent arXiv papers matching the search query. Change 'search_query' to any topic. No API key required."
+        },
+        {
+            "parameters": {
+                "language": "javaScript",
+                "jsCode": "const xml = $input.first().json.data;\n\nconst entries = [];\nconst entryBlocks = xml.match(/<entry>([\\s\\S]*?)<\\/entry>/g) || [];\n\nfor (const block of entryBlocks) {\n  const get = (tag) => {\n    const match = block.match(new RegExp(`<${tag}[^>]*>([\\\\s\\\\S]*?)<\\\\/${tag}>`));\n    return match ? match[1].trim() : '';\n  };\n\n  entries.push({\n    title: get('title').replace(/\\n/g, ' '),\n    abstract: get('summary').replace(/\\n/g, ' ').substring(0, 800),\n    authors: [...block.matchAll(/<name>(.*?)<\\/name>/g)].map(m => m[1]).join(', '),\n    link: (block.match(/href=\"(https:\\/\\/arxiv\\.org\\/abs\\/[^\"]+)\"/) || [])[1] || '',\n    published: get('published').substring(0, 10)\n  });\n}\n\nreturn entries.map(e => ({ json: e }));",
+                "notice": ""
+            },
+            "id": "node-parse",
+            "name": "Parse XML",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                680,
+                300
+            ],
+            "notes": "Parses the arXiv Atom XML feed and extracts title, abstract, authors, link, and published date for each paper."
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "https://api.anthropic.com/v1/messages",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "x-api-key",
+                            "value": "={{ $env.ANTHROPIC_API_KEY }}"
+                        },
+                        {
+                            "name": "anthropic-version",
+                            "value": "2023-06-01"
+                        },
+                        {
+                            "name": "content-type",
+                            "value": "application/json"
+                        }
+                    ]
+                },
+                "sendBody": true,
+                "bodyParameters": {
+                    "parameters": [
+                        {
+                            "name": "model",
+                            "value": "claude-sonnet-4-20250514"
+                        },
+                        {
+                            "name": "max_tokens",
+                            "value": "600"
+                        },
+                        {
+                            "name": "messages",
+                            "value": "=[{ \"role\": \"user\", \"content\": \"You are a research assistant helping a master's student in AI.\\n\\nPaper title: {{ $json.title }}\\nAuthors: {{ $json.authors }}\\nPublished: {{ $json.published }}\\n\\nAbstract:\\n{{ $json.abstract }}\\n\\nPlease provide:\\n1. A 2-sentence plain-English summary of the paper's contribution\\n2. Three bullet points of key takeaways\\n3. One sentence on why this matters for AI research today\\n\\nBe concise. Use clear academic language.\" }]"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "node-ai",
+            "name": "AI Summarise (Claude)",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                900,
+                300
+            ],
+            "notes": "Sends each paper abstract to Claude for summarisation. Set ANTHROPIC_API_KEY in Antigravity secrets or n8n environment variables. Swap the URL/headers to use OpenAI instead."
+        },
+        {
+            "parameters": {
+                "language": "javaScript",
+                "jsCode": "const paper = $('Parse XML').item.json;\nconst aiResponse = $input.first().json;\n\nconst summary = aiResponse.content?.[0]?.text || 'Summary not available.';\n\nconst markdownBlock = [\n  `## ${paper.title}`,\n  `**Authors:** ${paper.authors} | **Published:** ${paper.published}`,\n  '',\n  summary,\n  '',\n  `[Read paper →](${paper.link})`,\n  '',\n  '---'\n].join('\\n');\n\nreturn [{\n  json: {\n    title: paper.title,\n    authors: paper.authors,\n    published: paper.published,\n    link: paper.link,\n    summary: summary,\n    markdown: markdownBlock\n  }\n}];",
+                "notice": ""
+            },
+            "id": "node-format",
+            "name": "Format Digest",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1120,
+                300
+            ],
+            "notes": "Combines the AI summary with paper metadata into a clean Markdown block ready for Notion or email."
+        },
+        {
+            "parameters": {
+                "resource": "page",
+                "operation": "create",
+                "databaseId": {
+                    "__rl": true,
+                    "value": "YOUR_NOTION_DATABASE_ID",
+                    "mode": "id"
+                },
+                "title": "={{ $json.title }}",
+                "propertiesUi": {
+                    "propertyValues": [
+                        {
+                            "key": "Authors",
+                            "type": "rich_text",
+                            "textValue": "={{ $json.authors }}"
+                        },
+                        {
+                            "key": "Published",
+                            "type": "date",
+                            "dateValue": "={{ $json.published }}"
+                        },
+                        {
+                            "key": "Link",
+                            "type": "url",
+                            "urlValue": "={{ $json.link }}"
+                        }
+                    ]
+                },
+                "blockUi": {
+                    "blockValues": [
+                        {
+                            "type": "paragraph",
+                            "textContent": "={{ $json.summary }}"
+                        }
+                    ]
+                }
+            },
+            "id": "node-notion",
+            "name": "Save to Notion",
+            "type": "n8n-nodes-base.notion",
+            "typeVersion": 2.2,
+            "position": [
+                1340,
+                200
+            ],
+            "credentials": {
+                "notionApi": {
+                    "id": "YOUR_NOTION_CREDENTIAL_ID",
+                    "name": "Notion account"
+                }
+            },
+            "notes": "Creates a new Notion page per paper. Replace YOUR_NOTION_DATABASE_ID with your actual DB ID. Add a Notion integration to your database first."
+        },
+        {
+            "parameters": {
+                "sendTo": "={{ $env.GMAIL_USER }}",
+                "subject": "=Research Digest — {{ $now.format('YYYY-MM-DD') }}: {{ $json.title }}",
+                "message": "=<html><body><pre style='font-family:monospace;white-space:pre-wrap;max-width:680px'>{{ $json.markdown }}</pre></body></html>",
+                "options": {
+                    "allowUnauthorizedCerts": false
+                }
+            },
+            "id": "node-gmail",
+            "name": "Send Gmail Digest",
+            "type": "n8n-nodes-base.gmail",
+            "typeVersion": 2.1,
+            "position": [
+                1340,
+                420
+            ],
+            "credentials": {
+                "gmailOAuth2": {
+                    "id": "YOUR_GMAIL_CREDENTIAL_ID",
+                    "name": "Gmail account"
+                }
+            },
+            "notes": "Sends formatted digest email. Set GMAIL_USER in Antigravity or n8n environment. Connect your Google account in n8n credentials first."
+        }
+    ],
+    "connections": {
+        "Schedule Trigger": {
+            "main": [
+                [
+                    {
+                        "node": "Fetch arXiv Papers",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Fetch arXiv Papers": {
+            "main": [
+                [
+                    {
+                        "node": "Parse XML",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Parse XML": {
+            "main": [
+                [
+                    {
+                        "node": "AI Summarise (Claude)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "AI Summarise (Claude)": {
+            "main": [
+                [
+                    {
+                        "node": "Format Digest",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Format Digest": {
+            "main": [
+                [
+                    {
+                        "node": "Save to Notion",
+                        "type": "main",
+                        "index": 0
+                    },
+                    {
+                        "node": "Send Gmail Digest",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "settings": {
+        "executionOrder": "v1",
+        "saveManualExecutions": true,
+        "callerPolicy": "workflowsFromSameOwner",
+        "errorWorkflow": ""
+    },
+    "staticData": null,
+    "meta": {
+        "templateCredsSetupCompleted": false,
+        "instanceId": "antigravity-n8n-research-bot"
+    },
+    "tags": [
+        {
+            "name": "AI"
+        },
+        {
+            "name": "Research"
+        },
+        {
+            "name": "arXiv"
+        },
+        {
+            "name": "Masters"
+        }
+    ],
+    "_instructions": {
+        "how_to_import": "In n8n, go to Workflows → Import from file → select this JSON file.",
+        "required_credentials": [
+            "Notion API — add your Notion integration token",
+            "Gmail OAuth2 — connect your Google account",
+            "ANTHROPIC_API_KEY — set via Antigravity secrets or n8n environment variables"
+        ],
+        "required_replacements": [
+            "YOUR_NOTION_DATABASE_ID — the 32-char ID from your Notion database URL",
+            "YOUR_NOTION_CREDENTIAL_ID — assigned by n8n after you connect Notion",
+            "YOUR_GMAIL_CREDENTIAL_ID — assigned by n8n after you connect Gmail"
+        ],
+        "antigravity_secrets": [
+            "antigravity secrets set ANTHROPIC_API_KEY=sk-ant-...",
+            "antigravity secrets set GMAIL_USER=you@gmail.com",
+            "antigravity secrets set NOTION_TOKEN=secret_..."
+        ],
+        "test_tip": "Run the workflow manually first using the 'Test workflow' button. Check each node's output before enabling the schedule."
+    }
+}
