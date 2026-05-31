@@ -40,6 +40,26 @@ antigravity secrets set GMAIL_USER=your_email@gmail.com
   }
   ```
 
+### 4. Configure Credentials & Notion Database ID
+If you are running the workflow on **n8n Cloud** or a local n8n instance, configure the node parameters and credentials:
+
+#### A. Notion Integration
+1. Double-click the **Save to Notion** node.
+2. Under **Credential to connect with**, create or select your **Notion OAuth2** credential and log in to authorize n8n.
+3. Copy your database's **Database ID** and paste it into the **Database ID** field:
+   * **Where to find it**: Open the database page in your web browser. The ID is the 32-character string in the URL after the slash (`/`) and before the question mark (`?`):
+     `https://www.notion.so/workspace/`**`DATABASE_ID_IS_HERE`**`?v=...`
+4. **Important**: In Notion, click the three dots (`...`) in the top-right corner of your database, scroll down to **+ Add connections**, search for **n8n**, and select it to grant access.
+
+#### B. Gmail Integration
+1. Double-click the **Send Gmail Digest** node.
+2. Under **Credential to connect with**, create or select a **Gmail OAuth2** credential and authorize your Google account.
+3. In the **Send To** field, replace `{{ $env.GMAIL_USER }}` with your target recipient email (e.g., `you@example.com`).
+
+#### C. Claude API Integration
+1. Double-click the **AI Summarise (Claude)** node.
+2. Under **Header Parameters**, replace the expression `{{ $env.ANTHROPIC_API_KEY }}` with your actual Anthropic API Key (`sk-ant-api03-...`).
+
 ---
 
 ## 📘 Detailed Setup & Guide
